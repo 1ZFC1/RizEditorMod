@@ -111,9 +111,48 @@ git push origin v0.4.1
    判断是否成功要看输出里有没有 `* [new branch]` / `main -> main`，或事后 `git ls-remote origin` ✓
 4. **行尾**：仓库里是 LF，Windows 检出时会提示「LF will be replaced by CRLF」，属正常 ✓
 
-## 8. Issue / PR 口径（建议写进 README 或仓库设置）
+## 8. Issue 口径
 
 - 本项目为**个人向**，不保证支持与合并；Issue 建议附：编辑器版本、`GameAssembly.dll` 哈希、
   `BepInEx\LogOutput.log` 相关片段、复现步骤
-- 涉及游戏本体、破解、分发游戏资源的请求一律不接受
-- PR 请保持「一次一个明确任务」，并说明跑了哪些测试
+- 涉及游戏本体、破解、绕过版本校验、分发游戏资源的请求一律不接受
+- 编辑器版本升级后插件会**拒绝加载**（哈希不匹配），这不是 bug，需要重新调查 interop/metadata
+
+## 9. 收到 PR 时怎么处理
+
+公开仓库是**只读镜像**（由开发仓库同步而来）。因此**不要直接 merge**：那样改动会在下一次同步时被覆盖。
+正确做法是先把贡献者提交**摘进开发仓库**，再按常规流程发布。
+
+```powershell
+cd RZEMOD\RhythmEditor_working
+
+# 1) 抓取贡献者的 fork（每个贡献者只需添加一次 remote）
+git remote add contributor https://github.com/<贡献者>/RizEditorMod.git
+git fetch contributor
+
+# 2) 审查后把他的提交摘进开发仓库（保留原作者署名）
+git cherry-pick <提交哈希>            # 多个提交依次进行；冲突在开发仓库里解决
+#    也可以：git checkout -b pr-<编号> contributor/main，改好后再合回 main
+
+# 3) 验证 + 同步发布
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-Install-RhythmEditorMod.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Publish-GitHub.ps1 -Commit -Push -Message "feat: 采纳 PR #<编号>（@<作者>）"
+```
+
+### 评审清单（逐项确认后再 cherry-pick）
+
+1. **测试**：贡献者是否跑了纯数据测试并给出结果（当前基线 **51/51**）；插件与 Core 是否 0 警告 0 错误
+2. **环境**：是否写明编辑器版本与 `GameAssembly.dll` 哈希（`F6CCB822…D683876`）——版本不一致的改动本机无法验证
+3. **范围**：是否「一次一个明确任务」，没有顺手重构/格式化/升级依赖
+4. **合规**：没有游戏本体、`GameAssembly.dll`、`BepInEx/interop|metadata`、音频、发布 ZIP、日志缓存；
+   没有搬运反编译得到的游戏源码；引用的第三方实现已注明来源与许可
+5. **文档**：用户可见改动更新了 `CHANGELOG.md`，设计取舍进 `DECISIONS.md`，定位变化进 `CODEMAP.md`
+6. **回归**：手动复现一次改动前后行为，确认不影响原版路径（不按 `Shift`、不缩放时的行为必须与改造前一致）
+
+### 处理完成后
+
+在 GitHub 上给该 PR 留言并关闭（例如）：「已 cherry-pick 到开发线（提交 `<哈希>`），随下次同步发布，感谢贡献！」
+若改动需要调整，直接在 PR 里留言说明，让作者更新分支后再摘取。
+
+> 注意：`CONTRIBUTING.md` 与 `.github/` 模板**只存在于开发仓库**，不随同步发布，因此公开仓库的
+> PR/Issue 页面**不会自动套用模板**；评审时请按上面的清单人工核对。
