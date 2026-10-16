@@ -10,6 +10,7 @@
 
 **本轮已完成并验收**（2026-09-24/10-15，均已装入 `RhythmEditor_working`，自动测试 **51/51**）：
 
+0. **公开仓库已建立**（2026-10-16）：GitHub 仓库 <https://github.com/1ZFC1/RizEditorMod>（Public，MIT 覆盖插件自身源码）。发布采用**独立工作区**方案：`RZEMOD\RizEditorMod\` 是公开镜像（自己的 git 历史），由 `tools/Publish-GitHub.ps1` 从开发仓库的**跟踪文件**同步（排除私人笔记、规范化本地绝对路径、保留手写的 README/LICENSE），`RhythmEditor_working` / `modded` / `original` 均不受影响。首次发布：2 个提交、103 文件、375 KiB，含 `README.md`、`LICENSE`(MIT)、`docs/GITHUB.md`（维护教程）与 `tools/Publish-GitHub.ps1`；标签 `v0.4.0`。仓库**不含**游戏本体、`GameAssembly.dll`、`BepInEx/`（interop/metadata）、`#Samples/`、音频与发布 ZIP。
 0. **发布 0.4.0**（2026-10-16，已完成自动化验证与人工验收）：`Plugin.Version` = `0.4.0`；包 `artifacts/releases/RhythmEditorMod-0.4.0-win-x64.zip`，**ZIP SHA-256 `5E460EE6D164FE2D9F14B2BC61704C21DC78B2DE55B5DC869023B84675015C56`**，payload 387 文件 / 139,509,396 字节；插件测试 51/51，插件+管理器+原生启动器 0 警告 0 错误；干净副本（由 `original` 新复制、58/58 一致）依次通过安装/重复安装/禁用启用/仅卸载重装/完整移除重装，且 58 文件始终与 baseline 一致；`RhythmEditor_modded` 已由 0.3.0 升到 0.4.0（备份 `20261016-004012`），安装后 DLL 与构建产物逐字节一致；使用者确认可用。细节见 `DISTRIBUTION.md`。提交 `0e3bf00`。
 0. **修复「项目」工具提示文本串台 + 日志规范化**（D-032）：项目 body 的状态行与标题改为**自持**（每帧重设），项目消息直连自身、不再与公共状态出口互通 → 在画布流速里设定缓动不会再改写项目面板文字；日志改为「信息尽量全、只在动作/状态变化时输出」，并修掉上一版每帧重写标题造成的刷屏（一轮会话 1052 行中 718 行），补全缩放/项目 body/游玩区域边框/预览蒙版/跨画布剪贴板等日志上下文。已由使用者验收（「没什么问题」）；更细的字段取舍记为低优先（`BACKLOG.md`）。
 0. **整体缩放改为 40%–200%、每格 10 个百分点**（D-031）：`Ctrl+Shift+滚轮` 现在可**放大**（原先被 `scale ≥ 0.999` 挡住只能缩小），步进由「乘 1.12」改为**加 10 个百分点**（17 档），按 10% 栅格取整不漂移；放大/缩小共用「突破缩放极限」门闩，关掉复位 100%。纯逻辑在 `Core/ZoomStepping.cs` 并有自动测试，插件测试数 48 → **51**。已由使用者验收。
