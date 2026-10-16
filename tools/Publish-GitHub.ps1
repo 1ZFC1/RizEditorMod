@@ -28,10 +28,16 @@ if ([string]::IsNullOrWhiteSpace($Target)) {
     $Target = [IO.Path]::GetFullPath($Target)
 }
 
-# Never published: the user's personal notes.
+# Never published: the user's personal notes, plus the contribution templates which are deliberately
+# kept in the development repository only.
 $excluded = @(
     'docs/待实现功能.txt',
-    'docs/问题BUG.txt'
+    'docs/问题BUG.txt',
+    'CONTRIBUTING.md'
+)
+
+$excludedPrefixes = @(
+    '.github/'
 )
 
 # Preserved in the target folder: they are maintained there (or belong to git itself).
@@ -67,7 +73,14 @@ function Get-TrackedFiles {
         throw 'git ls-files 失败：请确认开发仓库可用。'
     }
 
-    return $output -split "`0" | Where-Object { $_ -and ($excluded -notcontains $_) }
+    return $output -split "`0" | Where-Object {
+        if (-not $_) { return $false }
+        if ($excluded -contains $_) { return $false }
+        foreach ($prefix in $excludedPrefixes) {
+            if ($_.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+        }
+        return $true
+    }
 }
 
 function Write-PublishedFile {
@@ -155,7 +168,7 @@ Get-ChildItem -LiteralPath $Target -Recurse -Directory -Force |
     }
 
 Write-Host "已同步 $($tracked.Count) 个文件（重写本地绝对路径 $rewriteTotal 处，删除 $removed 个多余文件）。"
-Write-Host "未发布（私人笔记）：$($excluded -join '、')"
+Write-Host "未发布：$($excluded -join '、')、$($excludedPrefixes -join '、')（前缀）"
 
 if (-not $Commit) {
     Write-Host '未提交（加 -Commit 可提交，加 -Push 可同时推送）。'
