@@ -1,0 +1,52 @@
+# 这是“补丁/文档覆盖层”仓库。
+# 下列发布文件必须保留在磁盘上；它们被忽略是为了避免普通 Git 历史被大型二进制占满，绝不表示可以删除。
+/Rizline Editor.exe
+/Rizline Editor Manual.exe
+/*.dll
+/Rizline Editor_Data/
+/#Samples/
+/LICENSE.txt
+
+# IDE 和操作系统本地状态
+/.idea/
+/.vscode/
+Thumbs.db
+Desktop.ini
+
+# 运行日志、崩溃信息和临时文件
+*.log
+*.dmp
+*.tmp
+*.bak
+/Crashes/
+/Temp/
+/temp/
+/tmp/
+
+# 分析工具与构建生成物
+/research/generated/
+/research/dumps/
+/baseline/runtime-artifacts/
+/build/
+/dist/
+/.cache/
+/artifacts/
+bin/
+obj/
+
+# 临时调查探针：保留在磁盘上以便复用，但脱离 *.cs 编译范围且不提交（见 docs/STATUS.md）
+/src/RhythmEditorMod/*.cs.disabled
+
+# 本地 IL2CPP 插件运行环境（由安装脚本重建，不提交第三方二进制、生成接口和日志）
+/BepInEx/
+/dotnet/
+/winhttp.dll
+/doorstop_config.ini
+/.doorstop_version
+/changelog.txt
+
+# 常见脚本缓存和虚拟环境
+__pycache__/
+*.py[cod]
+/.venv/
+/node_modules/

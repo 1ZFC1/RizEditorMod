@@ -1,0 +1,53 @@
+以  RhythmEditor_working\#Samples\Pastel Lines\Chart_IN.json  为例
+fileVersion --暂时不清楚。
+chartDelayMs --谱面延后(毫秒为单位，可以为负数)，目的是将谱面和音乐对准。
+themes --颜色选取，其下有两个colorsList，每个colorsList下分为背景色、音符颜色和UI颜色（即打击特效颜色、进度条颜色）；每种颜色由"rgb"和"a"（透明度）唯一确定。然后，colorsList按顺序来说：
+	第一个colorsList是常规状态下的颜色；
+	第二个colorsList是"Riztime"状态下的颜色。"Riztime"也称"challengeTime"，在谱面播放到特定时候时，之前说的三种颜色（背景色、音符颜色和UI颜色）会在此处改变形成视觉上的冲击，一张谱面可以有多个"Riztime"，但常规情况下只有一个"Riztime"并且在现有的编辑器中只能选择一个"Riztime"，多个"Riztime"需要手动修改对应谱面.json文件。
+challengeTimes --即"Riztime"相关参数，其有四个参数：
+	checkPoint --展示不知道是什么意思；
+	start --开始时间，颜色会从常规变为"Riztime"下相关参数；
+	end	--结束时间，颜色会变回常规；
+	transTime --颜色的转变时间（秒为单位），在该时间内颜色会从下往上依次变化，其越短，则变化时间越快。
+bPM --歌曲基础bpm信息
+bpmShifts --音乐bpm可能会改变，通过修改bpm可以保持与音乐的对应，其有四个参数：
+	time --bpm开始变化的节拍数（单位是节拍而不是秒）；
+	value --改变值为基础bpm的多少倍，不过在编辑器中是直接写入改变后的数值而非倍数，转到json文件中存储的是倍数；
+	easeType --缓动类型（这个之后会细讲），bpm中的缓动系数固定为0，但不代表"Linear"缓动，而是直接突变，更像是"Zero"；
+	floorPosition --暂时不清楚。
+lines --谱面的关键元素"线"，一个线由多个点依次连接，可以删除点，选择一条线相当于选择这条线上的所有点，谱面json文件的绝大部分都是lines。
+	linePoints --一条线的多个点，每个点有6个参数：
+		time --点所在的节拍数；
+		xPosition --点所在对应画布的x坐标（没有y坐标，因为每个点的y坐标会根据画布"canvas"的流速实时计算得到，也就是说点的x坐标可以直接用位置表示，y坐标只能用速度来确定，真实y坐标会采用积分求得，编辑器里认为屏幕靠下方的一条红色横线代表y坐标为0的位置）；
+		color --节点颜色，若两个节点颜色不同，则线的颜色会均匀变化（四个参数线性变化）；
+		easeType --缓动类型，表示这个点到下一个点之间的线的形态。（0-Linear; 1-In Quad; 2-Out Quad; 3-InOut Quad; 4-In Cubic; 5-Out Cubic; 6-InOut Cubic; 7-In Quart; 8-Out Quart; 9-InOut Quart; 10-In Quint; 11-Out Quint; 12-InOut Quint; 13-Zero; 14-One; 15-In Circle; 16-Out Circle; 17-Sin; 18-Cos）；
+		canvasIndex --节点所在画布的编号，一条线的节点可以在不同画布上，也就是说线的形状不会保持固定；
+		floorPosition --暂时不清楚。
+	notes --线上的音符（有三种类型，单点，，长条）。
+	judgeRingColor --暂时不清楚，可能是在原有线的颜色下，强行覆盖一层颜色，还有判定圈相关（这个游戏将通常的判定线改为了判定圈，判定圈固定在y=0处，其x坐标为对应时刻“线”与横线y=0的交点）总的来说就是线色覆盖和判定圈颜色改变。
+	以上三个参数（linePoints、notes、judgeRingColor）应该是组成一条线的所有参数。
+canvasMoves --画布运动，点是依托于画布的，每个画布有其坐标轴，画布移动，坐标轴也会跟着移动，同样的，该画布上的点也会随之移动。如下为其相关参数：
+	index --画布编号；
+	xPositionKeyPoints --画布移动序列，其通过关键节点表示（类似"线"的逻辑），每个节点有四个参数：
+		time --节点所在节拍数；
+		value --节点所在基准x坐标（这个坐标可当作地面的参考系，不会动），其表示在该节点时刻画布的x坐标即为该节点坐标；
+		easeType --缓动类型（与"线"完全一致），表示这个节点到下一个节点之间的画布x方向运动情况；
+		floorPosition --暂时不清楚。
+	speedKeyPoints --画布速度，画布流动速度，其直接影响画布上点的速度，从而影响每个时刻，点的y坐标（每个点的y坐标由从0节拍开始到该点所在节拍之间的 速度对时间 的积分）。其有四个参数：
+		time --画布流速改变时刻，以节拍为单位；
+		value --画布流速，可为负，其中1为初始设定流速；
+		easeType --只能是0，但实际上其不代表"Linear"缓动，而是直接突变，更像是"Zero"；
+		floorPosition --暂时不清楚。
+cameraMove --摄像机运动，分为摄像机移动和缩放：
+	scaleKeyPoints --摄像机缩放，实际效果为坐标轴可见范围变化，会改变判定圈大小，音符大小，但不会改变线的宽度。同样通过关键节点表示，其有4个参数：
+		time --摄像机缩放改变节点所在节拍数；
+		value --缩放倍数，以1为基准，数值在0.1~10之间；
+		easeType --缓动类型（与"线"完全一致），表示这个节点到下一个节点之间的摄像机缩放速度情况；
+		floorPosition --暂时不清楚。
+	xPositionKeyPoints --摄像机x方向的运动，有4个参数：
+		time --摄像机运动改变节点所在节拍数；
+		value --节点所在基准x坐标（这个坐标可当作地面的参考系，不会动），其表示在该节点时刻摄像机的x坐标即为该节点坐标（值得注意的是：摄像机往右移动，其拍摄的内容相对于摄像机会往左移动）；
+		easeType --缓动类型（与"线"完全一致），表示这个节点到下一个节点之间的摄像机x方向运动情况；
+		floorPosition --暂时不清楚。
+
+以上应该就是json文件出现的所有东西了。
