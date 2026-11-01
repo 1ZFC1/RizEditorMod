@@ -141,7 +141,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Publish-GitHub.ps1 -
 
 ### 评审清单（逐项确认后再 cherry-pick）
 
-1. **测试**：贡献者是否跑了纯数据测试并给出结果（当前基线 **51/51**）；插件与 Core 是否 0 警告 0 错误
+1. **测试**：贡献者是否跑了纯数据测试并给出结果（当前基线 **58/58**）；插件与 Core 是否 0 警告 0 错误
 2. **环境**：是否写明编辑器版本与 `GameAssembly.dll` 哈希（`F6CCB822…D683876`）——版本不一致的改动本机无法验证
 3. **范围**：是否「一次一个明确任务」，没有顺手重构/格式化/升级依赖
 4. **合规**：没有游戏本体、`GameAssembly.dll`、`BepInEx/interop|metadata`、音频、发布 ZIP、日志缓存；

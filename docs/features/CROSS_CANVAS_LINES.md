@@ -1,6 +1,6 @@
 # 跨画布线的复制与粘贴
 
-状态：**已实现并验收**（2026-10-15/16）。相关：`DECISIONS.md` D-030、`CHART_FORMAT.md`（`linePoints[].canvasIndex`）、`baseline/CROSS_CANVAS_HOLD_EXPERIMENT.md`、`docs/features/CANVAS_EVENT_CLIPBOARD.md`。
+状态：**复制/粘贴已实现并验收**（2026-10-15/16）；**2026-10-30 增加 Shift 剪切与 `Ctrl+D` 只删除，已验收（「没问题」）**。相关：`DECISIONS.md` D-030、`CHART_FORMAT.md`（`linePoints[].canvasIndex`）、`baseline/CROSS_CANVAS_HOLD_EXPERIMENT.md`、`docs/features/CANVAS_EVENT_CLIPBOARD.md`。
 
 ## 1. 需求
 
@@ -14,6 +14,8 @@
 6. 命中规则：**节点要被完全框住**（两轴）；`Ctrl` 在框选时无作用（不追加）；
 7. 粘贴锚点：**全剪贴板中节拍最小的节点；同拍并列时取 x 最大者**（原版口径）；
 8. x 吸附**跟随「水平细分」设置**；拍吸附跟随「垂直细分」。
+9. `Ctrl+X` 在按住 `Shift` 选中整条跨画布线后，**同时删除原线**。
+10. `Ctrl+D` 在按住 `Shift` 选中整条跨画布线后，**只删除**，不改变插件剪贴板或原版线剪贴板。
 
 ## 2. 原版为什么做不到（代码与实测证据）
 
@@ -37,7 +39,8 @@
 | 补丁 | 目标 | 线编辑（`LineEditorIsActive`）分支 |
 | --- | --- | --- |
 | `SpeedCopyShortcutPatch` | `LineEditor._Start_b__28_3`（`Ctrl+C`） | `CrossCanvasLineClipboard.BeginSelection(editor, cut: false)` |
-| `SpeedCutShortcutPatch` | `_Start_b__28_5`（`Ctrl+X`） | `BeginSelection(editor, cut: true)`（Shift 剪切暂按复制处理） |
+| `SpeedCutShortcutPatch` | `_Start_b__28_5`（`Ctrl+X`） | `BeginSelection(editor, cut: true)`；Shift 选中后删除原线 |
+| `Ctrl+D`（线编辑） | `SpeedClipboardController.BeginLineDeleteOnly()` | 转为 `BeginSelection(editor, cut: true, deleteOnly: true)`；Shift 选中后只删除 |
 | `SpeedPasteExactShortcutPatch` | `_Start_b__28_8`（`Ctrl+V`） | 若 mod 剪贴板非空 → `QueuePaste(mirror: false)`，否则交回原版 |
 | `SpeedPasteAlignedShortcutPatch` | `_Start_b__28_9`（`Ctrl+Shift+V`） | 同上，`mirror: true` |
 
@@ -63,7 +66,10 @@
 | 动作 | 行为 |
 | --- | --- |
 | Shift 拖框（mod 路径） | 采集 `LineClipboardEntry`（逐节点含 `time/xPosition/easeType/canvasIndex/floorPosition/color` + `notes` + 两个颜色数组）→ 清空**原版**两个线剪贴板 |
+| Shift + `Ctrl+X` | 采集插件剪贴板 → 用整线数组调用原版 `CutLines` 删除源线（所有画布节点一起删）→ 清空原版两个线剪贴板 |
+| Shift + `Ctrl+D` | 用整线数组调用原版 `CutLines` 删除源线 → 还原删除前的原版两个线剪贴板；插件剪贴板不变 |
 | `Ctrl+C/X` 不按 Shift | 调原版 `CopyLines/CutLines` → **清空 mod 剪贴板**（`ForgetClipboard`） |
+| `Ctrl+D` 不按 Shift | 调原版 `CutLines` → 还原删除前的原版两个线剪贴板；插件剪贴板不变 |
 | 系统剪切板导入线 | 写原版剪贴板 → 同样清空 mod 剪贴板 |
 
 → 规则：**最后复制者拥有剪贴板**。修这个之前出现过「原版复制后 `Ctrl+V` 仍粘 mod 的旧内容」✗。
@@ -104,13 +110,15 @@
 1. 线编辑里先点一下画布 → `Ctrl+C` → **按住 `Shift`** 拖框框住某条跨画布线的节点：拖动中该线**实时高亮**（其它画布的线不会被顺带选中），松开鼠标后高亮消失、日志出现「已选中并复制 N 条线…其中跨画布 M 条」。
 2. 把鼠标移到别处 → `Ctrl+V`：整条线按**画布偏移 0** 粘贴，锚点落在鼠标处并按水平细分吸附；`Ctrl+Shift+V` 则为以鼠标为对称轴的镜像。
 3. 切换显示画布 → `Ctrl+V`：各节点画布**整体偏移**（日志写 `画布偏移 +N`）。
-4. 不按 `Shift` 的 `Ctrl+C/V` 与原版完全一致；原版复制后 `Ctrl+V` 应粘原版内容（日志会有「跨画布剪贴板已清空…」）。
-5. 断言无副作用：不按 Shift 时零干预；`Esc`/离开线工具会清高亮；单步 Undo 撤销一次粘贴。
+4. **剪切**：`Ctrl+X` → 按住 `Shift` 框选 → 原线应从谱面消失，状态行显示「跨画布剪切…」；随后 `Ctrl+V` 应完整粘回（含其它画布节点/音符/颜色事件）。
+5. **只删除**：先复制一条线占住剪贴板 → `Ctrl+D` → 按住 `Shift` 框选 → 原线消失，状态行显示「跨画布删除…未写入剪贴板」；再 `Ctrl+V` 仍应粘贴步骤 5 之前复制的内容。
+6. 不按 `Shift` 的 `Ctrl+C/V/X/D` 与原版完全一致；原版复制后 `Ctrl+V` 应粘原版内容（日志会有「跨画布剪贴板已清空…」）。
+7. 断言无副作用：不按 Shift 时零干预；`Esc`/离开线工具会清高亮；单步 Undo 撤销一次粘贴/剪切/删除。
 
 ## 6. 风险与已知边界
 
 - 依赖原版对象名不变量：`LineEditor._Start_b__28_3/5/8/9`、`LineInformation.startLineTransform/endLineTransform/lineData`、`SnapLines/SnapLine(Clone)`、`snapHLinesSplit`。改名会退化到「兜底换算」或直接不吸附（有日志）。
-- **Shift 剪切**目前按复制处理（不删除原线），日志会注明。
-- 跨画布复制**不写系统剪切板**（原版路径的导出不受影响）。
+- **Shift 剪切/只删除**通过原版 `CutLines` 删除整条 `Line`（含其它画布节点、音符、颜色事件）；一次操作应为一个 Undo 步骤，需实机确认。
+- 删除时临时抑制系统剪切板导出；跨画布剪切/删除和跨画布复制都不写系统剪切板。
 - `floorPosition` 不手工换算，交给 `SetFloorPosition()` 重算。
 - 单位换算依赖「同一画布上至少有两个不同 x 的已渲染节点」；不满足时退回旧口径（日志注明）。

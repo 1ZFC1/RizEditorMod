@@ -41,13 +41,6 @@ internal static class SpeedClipboardController
         public bool DeleteOnly;
     }
 
-    private sealed class LineDeleteRequest
-    {
-        public LineEditor Editor = null!;
-        public LineClipboardEntry[] Saved = Array.Empty<LineClipboardEntry>();
-        public LineClipboardEntry[] SavedMirror = Array.Empty<LineClipboardEntry>();
-    }
-
     public static void HandleKeyboard()
     {
         if (IsTextInputActive())
@@ -156,55 +149,10 @@ internal static class SpeedClipboardController
             return;
         }
 
-        try
-        {
-            var request = new LineDeleteRequest
-            {
-                Editor = lineEditor,
-                Saved = EventClipboardOperations.CaptureLines(lineEditor),
-                SavedMirror = EventClipboardOperations.CaptureMirrorLines(lineEditor),
-            };
-            System.Action<Il2CppReferenceArray<Line>> completed = lines =>
-            {
-                try
-                {
-                    _suppressNativeLineExport = true;
-                    try
-                    {
-                        request.Editor.CutLines(lines, false);
-                    }
-                    finally
-                    {
-                        _suppressNativeLineExport = false;
-                    }
-
-                    EventClipboardOperations.ReplaceLineClipboard(request.Editor, request.Saved);
-                    EventClipboardOperations.ReplaceMirrorLineClipboard(request.Editor, request.SavedMirror);
-                    var count = lines?.Length ?? 0;
-                    var status = $"已删除 {count} 条线（未写入软件剪贴板）。";
-                    SpeedEasePanel.Instance?.SetEventStatus(status);
-                    Plugin.LogSource.LogInfo(status);
-                }
-                catch (Exception error)
-                {
-                    _suppressNativeLineExport = false;
-                    Plugin.LogSource.LogError(error);
-                    SpeedEasePanel.Instance?.SetEventStatus($"删除线失败：{error.Message}");
-                }
-            };
-            var routine = lineEditor.SelectLines(
-                lineEditor.cutColor,
-                (Il2CppSystem.Action<Il2CppReferenceArray<Line>>)completed);
-            var coroutineOwner = SpeedEasePanel.Instance
-                ?? throw new InvalidOperationException("画布工具面板尚未初始化。");
-            coroutineOwner.StartCoroutine(routine);
-            SpeedEasePanel.Instance?.SetEventStatus("删除线：请按住左键拖出矩形框选区，按 Esc 或右键取消。");
-        }
-        catch (Exception error)
-        {
-            Plugin.LogSource.LogError(error);
-            SpeedEasePanel.Instance?.SetEventStatus($"无法开始删除线框选：{error.Message}");
-        }
+        // Route Ctrl+D through the same rectangle as cross-canvas copy/cut: with Shift held the
+        // plugin deletes whole cross-canvas lines; without Shift CompleteSelection runs the original
+        // CutLines and restores the native line clipboards.
+        CrossCanvasLineClipboard.BeginSelection(lineEditor, cut: true, deleteOnly: true);
     }
 
     private static bool IsTextInputActive()
@@ -688,6 +636,20 @@ internal static class SpeedClipboardController
         }
 
         Plugin.LogSource.LogInfo(status);
+    }
+
+    internal static void WithoutNativeLineExport(Action action)
+    {
+        var previous = _suppressNativeLineExport;
+        _suppressNativeLineExport = true;
+        try
+        {
+            action();
+        }
+        finally
+        {
+            _suppressNativeLineExport = previous;
+        }
     }
 
     internal static void ExportNativeLines(LineEditor editor)

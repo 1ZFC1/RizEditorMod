@@ -20,8 +20,15 @@ var tests = new (string Name, Action Run)[]
     ("canvas event mouse-aligned paste", CanvasEventMouseAlignedPaste),
     ("canvas event mirrored mouse-aligned paste", CanvasEventMirroredMouseAlignedPaste),
     ("canvas event subdivision snapping", CanvasEventSubdivisionSnapping),
-    ("chart color unique order", ChartColorUniqueOrder),
-    ("palette merge fills empty slots", PaletteMergeFillsEmptySlots),
+    ("palette orders colours by frequency", PaletteOrdersByFrequency),
+    ("palette frequency ties keep first seen order", PaletteFrequencyTiesKeepFirstSeen),
+    ("palette reinserts an existing colour without duplicating it", PaletteReinsertsWithoutDuplicate),
+    ("palette keeps old colours after the front block", PaletteKeepsOldColoursAfterFront),
+    ("palette caps the front block at the palette size", PaletteCapsAtCapacity),
+    ("palette skips alpha zero colours", PaletteSkipsAlphaZeroColours),
+    ("palette repeated import is stable", PaletteRepeatedImportIsStable),
+    ("palette treats white as a normal chart colour", PaletteTreatsWhiteAsNormalColour),
+    ("palette clear builds empty slots", PaletteClearBuildsEmptySlots),
     ("chart color byte scale", ChartChannelByteScale),
     ("speed clipboard text round trip", SpeedClipboardTextRoundTrip),
     ("canvas clipboard text round trip", CanvasClipboardTextRoundTrip),
@@ -245,40 +252,126 @@ static void CanvasEventSubdivisionSnapping()
     Close(2.0, CanvasEventEditing.SnapToSubdivision(2.0, 64));
 }
 
-static void ChartColorUniqueOrder()
+static void PaletteOrdersByFrequency()
 {
-    var colors = new[]
-    {
-        new Rgba32(255, 0, 0, 255),
-        new Rgba32(0, 255, 0, 255),
-        new Rgba32(255, 0, 0, 255),
-        new Rgba32(0, 0, 255, 128),
-    };
-    var unique = ChartColorCollection.UniqueInOrder(colors);
-    Equal(3, unique.Count);
-    Equal("FF0000FF", unique[0].ToHex());
-    Equal("00FF00FF", unique[1].ToHex());
-    Equal("0000FF80", unique[2].ToHex());
+    var red = new Rgba32(255, 0, 0, 255);
+    var green = new Rgba32(0, 255, 0, 255);
+    var blue = new Rgba32(0, 0, 255, 255);
+    var plan = ChartColorCollection.PlanFrequencyInsert(
+        new string?[5],
+        new[] { red, green, red, blue, green, red });
+
+    Equal(3, plan.Added);
+    Equal(0, plan.MovedFromOld);
+    Equal(0, plan.Evicted);
+    Equal(0, plan.Dropped);
+    Equal(3, plan.ChartColorCount);
+    Sequence(new[] { "FF0000FF", "00FF00FF", "0000FFFF", "", "" }, plan.Slots);
 }
 
-static void PaletteMergeFillsEmptySlots()
+static void PaletteFrequencyTiesKeepFirstSeen()
 {
-    string?[] existing = { "FF0000FF", null, "FFFFFFFF", "00FF00FF" };
-    var chart = new[]
-    {
-        new Rgba32(255, 0, 0, 255),
-        new Rgba32(0, 0, 255, 255),
-        new Rgba32(255, 255, 0, 255),
-        new Rgba32(0, 255, 255, 255),
-    };
-    var merged = ChartColorCollection.MergeIntoSlots(existing, chart);
-    Equal(2, merged.Added);
-    Equal(1, merged.Duplicate);
-    Equal(1, merged.Overflow);
-    Equal("FF0000FF", merged.Slots[0]);
-    Equal("0000FFFF", merged.Slots[1]);
-    Equal("FFFF00FF", merged.Slots[2]);
-    Equal("00FF00FF", merged.Slots[3]);
+    var red = new Rgba32(255, 0, 0, 255);
+    var green = new Rgba32(0, 255, 0, 255);
+    var plan = ChartColorCollection.PlanFrequencyInsert(
+        new string?[4],
+        new[] { red, green, green, red });
+
+    Sequence(new[] { "FF0000FF", "00FF00FF", "", "" }, plan.Slots);
+}
+
+static void PaletteReinsertsWithoutDuplicate()
+{
+    var blue = new Rgba32(0, 0, 255, 255);
+    string?[] existing = { "FF0000FF", "00FF00FF", "0000FFFF", null, null };
+    var plan = ChartColorCollection.PlanFrequencyInsert(existing, new[] { blue });
+
+    Equal(1, plan.Added);
+    Equal(1, plan.MovedFromOld);
+    Equal(0, plan.Evicted);
+    Equal(0, plan.Dropped);
+    Sequence(new[] { "0000FFFF", "FF0000FF", "00FF00FF", "", "" }, plan.Slots);
+}
+
+static void PaletteKeepsOldColoursAfterFront()
+{
+    var cyan = new Rgba32(0, 255, 255, 255);
+    string?[] existing = { "FF0000FF", "00FF00FF", "0000FFFF", "FFFF00FF" };
+    var plan = ChartColorCollection.PlanFrequencyInsert(existing, new[] { cyan });
+
+    Equal(1, plan.Added);
+    Equal(0, plan.MovedFromOld);
+    Equal(1, plan.Evicted);
+    Equal(0, plan.Dropped);
+    Sequence(new[] { "00FFFFFF", "FF0000FF", "00FF00FF", "0000FFFF" }, plan.Slots);
+}
+
+static void PaletteCapsAtCapacity()
+{
+    var a = new Rgba32(10, 0, 0, 255);
+    var b = new Rgba32(0, 20, 0, 255);
+    var c = new Rgba32(0, 0, 30, 255);
+    var d = new Rgba32(40, 50, 60, 255);
+    var plan = ChartColorCollection.PlanFrequencyInsert(
+        new string?[3],
+        new[] { a, b, b, c, c, c, d, d, d, d });
+
+    Equal(3, plan.Added);
+    Equal(1, plan.Dropped);
+    Equal(4, plan.ChartColorCount);
+    Sequence(new[] { "28323CFF", "00001EFF", "001400FF" }, plan.Slots);
+}
+
+static void PaletteSkipsAlphaZeroColours()
+{
+    var transparent = new Rgba32(255, 0, 0, 0);
+    var opaque = new Rgba32(0, 0, 255, 255);
+    var plan = ChartColorCollection.PlanFrequencyInsert(
+        new string?[3],
+        new[] { transparent, transparent, opaque });
+
+    Equal(1, plan.Added);
+    Equal(1, plan.ChartColorCount);
+    Sequence(new[] { "0000FFFF", "", "" }, plan.Slots);
+}
+
+static void PaletteRepeatedImportIsStable()
+{
+    var red = new Rgba32(255, 0, 0, 255);
+    var green = new Rgba32(0, 255, 0, 255);
+    var blue = new Rgba32(0, 0, 255, 255);
+    var yellow = new Rgba32(255, 255, 0, 255);
+    string?[] existing = { "FF0000FF", "00FF00FF", "0000FFFF", "FFFF00FF", null };
+    var chart = new[] { blue, blue, red };
+
+    var first = ChartColorCollection.PlanFrequencyInsert(existing, chart);
+    Equal(2, first.Added);
+    Equal(2, first.MovedFromOld);
+    Equal(0, first.Evicted);
+    Sequence(new[] { "0000FFFF", "FF0000FF", "00FF00FF", "FFFF00FF", "" }, first.Slots);
+
+    var second = ChartColorCollection.PlanFrequencyInsert(
+        first.Slots.Select(slot => (string?)slot).ToArray(),
+        chart);
+    Equal(0, second.Evicted);
+    Sequence(first.Slots, second.Slots);
+}
+
+static void PaletteTreatsWhiteAsNormalColour()
+{
+    var white = new Rgba32(255, 255, 255, 255);
+    string?[] existing = { "FFFFFFFF", "FF0000FF", null, null };
+    var plan = ChartColorCollection.PlanFrequencyInsert(existing, new[] { white });
+
+    Equal(1, plan.Added);
+    Equal(0, plan.MovedFromOld);
+    Equal(0, plan.Evicted);
+    Sequence(new[] { "FFFFFFFF", "FF0000FF", "", "" }, plan.Slots);
+}
+
+static void PaletteClearBuildsEmptySlots()
+{
+    Sequence(new[] { "", "", "", "" }, ChartColorCollection.BuildEmptySlots(4));
 }
 
 static void ChartChannelByteScale()

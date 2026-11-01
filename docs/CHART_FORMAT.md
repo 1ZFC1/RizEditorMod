@@ -40,6 +40,7 @@
 - `J2`：`baseline/JUDGE_RING_REVERSE_ORDER_EXPERIMENT.md` 中 `judgeRingColor` 倒序数组的渲染和保存实验。
 - `M1`：从当前版本受保护的 IL2CPP 元数据中恢复的 `Chart`、`Theme`、`ChallengeTime`、`Line`、`LinePoint`、`Note`、`CanvasMove`、`CameraMove`、`ColorKeyPoint` 和 `KeyPoint` 类型/字段定义；恢复过程见 `research/STAGE5_IL2CPP_METADATA.md`。
 - `E1`：`baseline/SPEED_EASING_PROTOTYPE.md` 中的画布流速离散采样、位置复算、编辑器打开/播放/保存实验。
+- `V1`：`ProjectInformation.set_RelativeSpeed`（token `0x0600013D`，RVA `0x2BEBE0`）反汇编：播放流速显示值 ↔ `RelativeSpeed` ↔ `project.speed`（偏移 `0x180`）的换算，以及 `RelativeSpeed` 的 `[-9, 18]` 钳制。详见 `docs/EDITOR_AXES_REFERENCE.md` §9.1。
 
 重要限制：本文中的“观察范围”只是 18 个样例实际出现的最小值和最大值，不表示编辑器允许范围或格式合法范围。
 
@@ -590,6 +591,8 @@ effectiveBPM = bPM × currentBpmShift.value
 `F1` 使用画布速度积分检查 Hold 结束位置，在 0.01 容差内达到 512/512 匹配；完全忽略速度、只做拍数换秒则只有 381/512 匹配。因此速度加权关系标记为 `confirmed`。
 
 `P1` 在速度为 1 时新增一次 105→210 BPM 变化。编辑器自动重算变化点之后的 30 个位置字段，30/30 都在 `10^-6` 容差内符合按有效 BPM 分段积分，最大绝对误差约 `8.93 × 10^-7`。
+
+`V1` 补充纵向世界坐标：渲染位置与 `floorPosition` 之间还隔着一层 `project.speed`（float，偏移 `0x180`）——`Δ世界y = project.speed × Δ秒`，而 `project.speed` 由设置界面的播放流速 S0 决定（`S0 ≥ 1` 时 `speed = 7(S0−1)/9 + 6`；`S0 < 1` 时 `speed = 3.889(S0−1) + 6`；`RelativeSpeed` 钳在 `[-9, 18]`）。因为 `floorPosition` 已含画布流速的积分，`可视世界高 = S1 × floorPosition` 只在画布流速 = 1 时成立，一般应为 `世界y = S1 × floorPosition / speed_canvas`。每屏拍数 = `(2 × orthographicSize / speed) × 有效BPM / 60`（缩放 = 1 时分子为 10，实测 `orthographicSize = 5`）。
 
 少量速度关键点和线节点仍存在锚点或重置方面的例外；多次 BPM 变化、BPM 与速度同刻变化和边界归属也尚未验证。除非后续掌握这些规则，否则任何转换工具仍应原样保留此字段，不能批量删除、归零或自行重算。
 

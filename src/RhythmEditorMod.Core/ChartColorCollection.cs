@@ -58,76 +58,133 @@ public readonly record struct Rgba32(byte R, byte G, byte B, byte A)
 
 public static class ChartColorCollection
 {
-    public static IReadOnlyList<Rgba32> UniqueInOrder(IEnumerable<Rgba32> colors)
-    {
-        ArgumentNullException.ThrowIfNull(colors);
-        var seen = new HashSet<uint>();
-        var result = new List<Rgba32>();
-        foreach (var color in colors)
-        {
-            var key = Pack(color);
-            if (!seen.Add(key))
-                continue;
-            result.Add(color);
-        }
-
-        return result;
-    }
-
-    public static PaletteMergeResult MergeIntoSlots(
+    /// <summary>
+    /// Builds the next palette layout from the current slots and every chart-colour occurrence.
+    /// The chart colours are deduplicated, sorted by descending occurrence count (ties keep the
+    /// first-seen order) and placed at the front. The old non-empty slots that are not part of the
+    /// front block keep their order directly after it, and entries that no longer fit are dropped;
+    /// any old copy of a front colour is removed so the palette never holds a duplicate. Repeating
+    /// the same import is idempotent instead of shifting the old colours again on every click.
+    /// </summary>
+    public static PaletteInsertionPlan PlanFrequencyInsert(
         IReadOnlyList<string?> existingSlots,
-        IReadOnlyList<Rgba32> chartColors)
+        IReadOnlyList<Rgba32> occurrences)
     {
         ArgumentNullException.ThrowIfNull(existingSlots);
-        ArgumentNullException.ThrowIfNull(chartColors);
+        ArgumentNullException.ThrowIfNull(occurrences);
 
-        var next = existingSlots.Select(slot => slot?.Trim() ?? string.Empty).ToArray();
-        var occupied = new HashSet<uint>();
-        for (var index = 0; index < next.Length; index++)
+        var capacity = existingSlots.Count;
+        if (capacity <= 0)
+            throw new ArgumentException("Palette capacity must be positive.", nameof(existingSlots));
+
+        var counts = new Dictionary<Rgba32, int>();
+        var firstSeen = new Dictionary<Rgba32, int>();
+        for (var index = 0; index < occurrences.Count; index++)
         {
-            if (Rgba32.IsEmptyPaletteSlot(next[index]))
+            var color = occurrences[index];
+            // Fully transparent colours are not useful as palette entries; skip them before
+            // counting so they neither enter the front block nor affect the frequency order.
+            if (color.A == 0)
+                continue;
+
+            if (counts.TryGetValue(color, out var count))
             {
-                next[index] = string.Empty;
+                counts[color] = count + 1;
                 continue;
             }
 
-            if (Rgba32.TryParseHex(next[index], out var existing))
-                occupied.Add(Pack(existing));
+            counts[color] = 1;
+            firstSeen[color] = index;
         }
 
-        var added = 0;
-        var duplicate = 0;
-        var overflow = 0;
-        foreach (var color in UniqueInOrder(chartColors))
+        var ordered = counts
+            .OrderByDescending(pair => pair.Value)
+            .ThenBy(pair => firstSeen[pair.Key])
+            .Select(pair => pair.Key)
+            .ToArray();
+
+        var front = new List<Rgba32>(Math.Min(capacity, ordered.Length));
+        var frontSet = new HashSet<Rgba32>();
+        for (var index = 0; index < ordered.Length && front.Count < capacity; index++)
         {
-            var key = Pack(color);
-            if (!occupied.Add(key))
-            {
-                duplicate++;
-                continue;
-            }
-
-            var slot = Array.FindIndex(next, Rgba32.IsEmptyPaletteSlot);
-            if (slot < 0)
-            {
-                overflow++;
-                occupied.Remove(key);
-                continue;
-            }
-
-            next[slot] = color.ToHex();
-            added++;
+            front.Add(ordered[index]);
+            frontSet.Add(ordered[index]);
         }
 
-        return new PaletteMergeResult(next, added, duplicate, overflow);
+        var frontCount = front.Count;
+        var dropped = ordered.Length - frontCount;
+        var oldRest = new List<string>(capacity);
+        var movedFromOld = 0;
+
+        for (var index = 0; index < capacity; index++)
+        {
+            var text = existingSlots[index]?.Trim() ?? string.Empty;
+            if (Rgba32.IsEmptyPaletteSlot(text))
+                continue;
+
+            if (Rgba32.TryParseHex(text, out var color))
+            {
+                if (frontSet.Contains(color))
+                {
+                    // The same colour is re-inserted at the front; drop the old copy so the
+                    // palette keeps no duplicates.
+                    movedFromOld++;
+                    continue;
+                }
+
+                oldRest.Add(color.ToHex());
+                continue;
+            }
+
+            oldRest.Add(text);
+        }
+
+        var next = new string[capacity];
+        Array.Fill(next, string.Empty);
+        for (var index = 0; index < frontCount; index++)
+            next[index] = front[index].ToHex();
+
+        // Keep the old non-front colours in their original order directly after the front block.
+        // This makes a repeated import of the same colours idempotent: the old colours are not
+        // shifted again by the whole front size on every click.
+        var available = capacity - frontCount;
+        var evicted = 0;
+        for (var index = 0; index < oldRest.Count; index++)
+        {
+            if (index < available)
+            {
+                next[frontCount + index] = oldRest[index];
+                continue;
+            }
+
+            if (!string.IsNullOrEmpty(oldRest[index]))
+                evicted++;
+        }
+
+        return new PaletteInsertionPlan(
+            next,
+            frontCount,
+            movedFromOld,
+            evicted,
+            dropped,
+            counts.Count);
     }
 
-    private static uint Pack(Rgba32 color) =>
-        ((uint)color.R << 24) | ((uint)color.G << 16) | ((uint)color.B << 8) | color.A;
+    public static IReadOnlyList<string> BuildEmptySlots(int capacity)
+    {
+        if (capacity <= 0)
+            throw new ArgumentOutOfRangeException(nameof(capacity));
+
+        var slots = new string[capacity];
+        Array.Fill(slots, string.Empty);
+        return slots;
+    }
 }
 
-public readonly record struct PaletteMergeResult(
+public readonly record struct PaletteInsertionPlan(
     IReadOnlyList<string> Slots,
     int Added,
-    int Duplicate,
-    int Overflow);
+    int MovedFromOld,
+    int Evicted,
+    int Dropped,
+    int ChartColorCount);

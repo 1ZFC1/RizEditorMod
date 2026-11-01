@@ -23,7 +23,7 @@ public sealed class SpeedEasePanel : MonoBehaviour
     private bool _easeDropdownOpen;
     private string _speedStatus = "请把播放头移到已有流速节点的拍数，再依次记录起点和终点。";
     private string _canvasStatus = "画布事件剪贴板已就绪。复制或剪切时请在按下快捷键后拖动框选。";
-    private string _colorStatus = "读取当前谱面中的主题色、线基础色、线颜色事件和判定环颜色，写入画线工具的调色板空槽。";
+    private string _paletteStatus = "读取当前谱面中的主题色、线基础色、线颜色事件和判定环颜色（跳过 alpha = 0），按出现频率排到调色板最前面，原有颜色整体后移。";
     private string _eventStatus = "框选复制后，可打开导出开关把内容写入系统剪切板。";
     private string _publishStatus = "打开谱面后，这里会显示画布、线和音符统计。";
     private string _customStatus = "插件工具栏入口的占位状态。";
@@ -43,6 +43,9 @@ public sealed class SpeedEasePanel : MonoBehaviour
     private Rect _continueRect;
     private Rect _cancelRect;
     private Rect _importColorsRect;
+    private Rect _clearPaletteRect;
+    private bool _clearPaletteArmed;
+    private PanelMode _clearPaletteMode = PanelMode.None;
     private Rect _thinLineRect;
     private Rect _previewMaskRect;
     private Rect _breakZoomRect;
@@ -266,12 +269,20 @@ public sealed class SpeedEasePanel : MonoBehaviour
         ProjectSwitcher.Tick();
         NativeProjectPanel.Tick();
         if (Input.GetKeyDown(KeyCode.F8))
+        {
             _visible = !_visible;
+            _clearPaletteArmed = false;
+        }
         SpeedClipboardController.HandleKeyboard();
         if (!_visible)
             return;
 
         var mode = GetPanelMode();
+        if (mode != _clearPaletteMode)
+        {
+            _clearPaletteArmed = false;
+            _clearPaletteMode = mode;
+        }
         if (mode == PanelMode.None)
             return;
 
@@ -287,6 +298,7 @@ public sealed class SpeedEasePanel : MonoBehaviour
         {
             if (_easeDropdownOpen)
                 _easeDropdownOpen = false;
+            _clearPaletteArmed = false;
             return;
         }
 
@@ -345,6 +357,8 @@ public sealed class SpeedEasePanel : MonoBehaviour
         {
             if (_importColorsRect.Contains(guiPoint))
                 ImportChartColors();
+            else if (_clearPaletteRect.Contains(guiPoint))
+                ToggleClearPalette();
             else if (_exportClipboardRect.Contains(guiPoint))
                 ToggleSystemClipboardExport();
             else if (_importClipboardRect.Contains(guiPoint))
@@ -356,6 +370,8 @@ public sealed class SpeedEasePanel : MonoBehaviour
         {
             if (_importColorsRect.Contains(guiPoint))
                 ImportChartColors();
+            else if (_clearPaletteRect.Contains(guiPoint))
+                ToggleClearPalette();
             else if (mode == PanelMode.ColorEvent)
                 HandleClipboardClick(guiPoint, ColorClipboardTarget());
             return;
@@ -440,6 +456,7 @@ public sealed class SpeedEasePanel : MonoBehaviour
         PreviewMaskControl.Update();
         EditorNavigation.ApplyHorizontalZoom();
         CrossCanvasLineClipboard.Track();
+        PreviewColorBadge.Tick();
     }
 
     public void OnGUI()
@@ -689,13 +706,15 @@ public sealed class SpeedEasePanel : MonoBehaviour
 
         if (mode == PanelMode.ColorEvent)
         {
-            _importColorsRect = new Rect(x, top + 246f, content, 32f);
+            _importColorsRect = new Rect(x, top + 246f, content * 0.48f, 32f);
+            _clearPaletteRect = new Rect(x + content * 0.52f, top + 246f, content * 0.48f, 32f);
             return;
         }
 
         if (mode == PanelMode.Line || mode == PanelMode.Theme)
         {
-            _importColorsRect = new Rect(x, top + 118f, content, 32f);
+            _importColorsRect = new Rect(x, top + 118f, content * 0.48f, 32f);
+            _clearPaletteRect = new Rect(x + content * 0.52f, top + 118f, content * 0.48f, 32f);
             return;
         }
 
@@ -741,8 +760,8 @@ public sealed class SpeedEasePanel : MonoBehaviour
         GUI.Box(_panelRect, "画线工具（F8 显示/隐藏）");
         var x = _panelRect.x + 14f;
         var y = _panelRect.y + 28f;
-        GUI.Label(new Rect(x, y, ContentWidth(), 78f), _colorStatus);
-        DrawButton(_importColorsRect, "一键加入调色板");
+        GUI.Label(new Rect(x, y, ContentWidth(), 78f), _paletteStatus);
+        DrawPaletteButtons();
         GUI.Label(new Rect(x, _panelRect.y + 158f, ContentWidth(), 36f), "打开导出后，原版复制或剪切线时会同时写入系统剪切板。导入只替换内部线剪贴板。");
         DrawClipboardButtons();
     }
@@ -761,7 +780,8 @@ public sealed class SpeedEasePanel : MonoBehaviour
             "Ctrl+V：粘贴上次复制的内容，保持原拍数；\n" +
             "Ctrl+Shift+V：最早事件对齐播放头。\n" +
             "目标拍已有事件时覆盖它，不再产生同拍重复。");
-        DrawButton(_importColorsRect, "一键加入调色板");
+        DrawPaletteButtons();
+        GUI.Label(new Rect(x, _panelRect.y + 284f, ContentWidth(), 64f), _paletteStatus);
         DrawClipboardButtons();
     }
 
@@ -770,8 +790,8 @@ public sealed class SpeedEasePanel : MonoBehaviour
         GUI.Box(_panelRect, "主题颜色（F8 显示/隐藏）");
         var x = _panelRect.x + 14f;
         var y = _panelRect.y + 28f;
-        GUI.Label(new Rect(x, y, ContentWidth(), 72f), _colorStatus);
-        DrawButton(_importColorsRect, "一键加入调色板");
+        GUI.Label(new Rect(x, y, ContentWidth(), 72f), _paletteStatus);
+        DrawPaletteButtons();
     }
 
     private void DrawBasicSettingsPanel()
@@ -1004,6 +1024,12 @@ public sealed class SpeedEasePanel : MonoBehaviour
 
     private static ClipboardTarget ColorClipboardTarget() => ClipboardTarget.ColorEvent;
 
+    private void DrawPaletteButtons()
+    {
+        DrawButton(_importColorsRect, "一键加入调色板");
+        DrawButton(_clearPaletteRect, _clearPaletteArmed ? "确认清空？" : "清空调色板");
+    }
+
     private static void DrawButton(Rect rect, string label)
     {
         GUI.Box(rect, label);
@@ -1109,10 +1135,10 @@ public sealed class SpeedEasePanel : MonoBehaviour
         _thinPreviewLines = !_thinPreviewLines;
         if (!_thinPreviewLines)
             EditorOperations.UpdatePreviewLineWidth(false);
-        _colorStatus = _thinPreviewLines
+        var status = _thinPreviewLines
             ? "预览细线已打开。进入带预览的播放后，谱面线宽约为原来的 75%。"
             : "预览细线已关闭，线宽会在退出预览后恢复。";
-        Plugin.LogSource.LogInfo(_colorStatus);
+        Plugin.LogSource.LogInfo(status);
     }
 
     private void TogglePreviewMask()
@@ -1123,18 +1149,42 @@ public sealed class SpeedEasePanel : MonoBehaviour
 
     private void ImportChartColors()
     {
+        _clearPaletteArmed = false;
         Plugin.LogSource.LogInfo("点击了一键加入调色板按钮。");
         try
         {
             var chart = ActiveLineEditor?.projectInformation?.chart
                 ?? ProjectInformation.instance?.chart;
-            _colorStatus = EditorOperations.ImportChartColorsToPalette(chart);
-            Plugin.LogSource.LogInfo(_colorStatus);
+            _paletteStatus = EditorOperations.ImportChartColorsToPalette(chart);
+            Plugin.LogSource.LogInfo(_paletteStatus);
         }
         catch (Exception error)
         {
             Plugin.LogSource.LogError(error);
-            _colorStatus = $"导入失败：{error.Message}";
+            _paletteStatus = $"导入失败：{error.Message}";
+        }
+    }
+
+    private void ToggleClearPalette()
+    {
+        if (!_clearPaletteArmed)
+        {
+            _clearPaletteArmed = true;
+            _paletteStatus = "再次点击「确认清空？」会清空全部槽位，且无法撤销。";
+            Plugin.LogSource.LogInfo("调色板清空：等待二次确认。");
+            return;
+        }
+
+        _clearPaletteArmed = false;
+        try
+        {
+            _paletteStatus = EditorOperations.ClearPalette();
+            Plugin.LogSource.LogInfo(_paletteStatus);
+        }
+        catch (Exception error)
+        {
+            Plugin.LogSource.LogError(error);
+            _paletteStatus = $"清空失败：{error.Message}";
         }
     }
 

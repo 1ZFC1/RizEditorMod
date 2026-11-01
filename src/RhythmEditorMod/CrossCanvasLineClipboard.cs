@@ -35,6 +35,7 @@ internal static class CrossCanvasLineClipboard
     {
         public LineEditor Editor = null!;
         public bool Cut;
+        public bool DeleteOnly;
         public LineEditor._SelectLines_d__35? State;
     }
 
@@ -77,7 +78,7 @@ internal static class CrossCanvasLineClipboard
     /// tool is active). The rectangle is drawn by the coroutine, so it must be started on a MonoBehaviour
     /// - the same owner the other tools use.
     /// </summary>
-    internal static void BeginSelection(LineEditor editor, bool cut)
+    internal static void BeginSelection(LineEditor editor, bool cut, bool deleteOnly = false)
     {
         try
         {
@@ -86,21 +87,23 @@ internal static class CrossCanvasLineClipboard
 
             ClearSelection("开始新的框选");
 
+            var action = deleteOnly ? "删除" : cut ? "剪切" : "复制";
+
             // The original only shows its selection rectangle while a canvas is focused.
             if (!SpeedClipboardController.HasFocusedCanvas())
             {
-                SetStatus("跨画布复制：请先在线编辑里点一下画布（没有聚焦画布时原版不会显示框选矩形）。");
+                SetStatus($"跨画布{action}：请先在线编辑里点一下画布（没有聚焦画布时原版不会显示框选矩形）。");
                 return;
             }
 
-            var request = new PendingSelection { Editor = editor, Cut = cut };
+            var request = new PendingSelection { Editor = editor, Cut = cut, DeleteOnly = deleteOnly };
             System.Action<Il2CppReferenceArray<Line>> completed = nativeLines => CompleteSelection(request, nativeLines);
             var routine = editor.SelectLines(
-                cut ? editor.cutColor : editor.copyColor,
+                cut || deleteOnly ? editor.cutColor : editor.copyColor,
                 (Il2CppSystem.Action<Il2CppReferenceArray<Line>>)completed);
             request.State = routine.Cast<LineEditor._SelectLines_d__35>();
             if (request.State == null)
-                Plugin.LogSource.LogWarning("跨画布线：无法读取原版框选协程的范围，Shift 模式将退回原版复制。");
+                Plugin.LogSource.LogWarning("跨画布线：无法读取原版框选协程的范围，Shift 模式将退回原版复制/剪切。");
 
             var coroutineOwner = SpeedEasePanel.Instance
                 ?? throw new InvalidOperationException("编辑器面板尚未初始化。");
@@ -109,7 +112,6 @@ internal static class CrossCanvasLineClipboard
             _pendingState = request.State;
             _shiftSeen = ShiftHeld;
 
-            var action = cut ? "剪切" : "复制";
             SetStatus($"跨画布{action}：按住左键拖出矩形框选区（按住 Shift 才会按整条跨画布线选中），按 Esc 或右键取消。");
         }
         catch (Exception error)
@@ -240,6 +242,12 @@ internal static class CrossCanvasLineClipboard
         {
             if (!_shiftSeen || request.State == null)
             {
+                if (request.DeleteOnly)
+                {
+                    DeleteNativeSelection(request.Editor, nativeLines);
+                    return;
+                }
+
                 // No Shift (or the rectangle range is unreadable): behave exactly like the original, and
                 // drop the plugin's own clipboard so the next Ctrl+V pastes what was just copied here.
                 if (request.Cut)
@@ -257,24 +265,111 @@ internal static class CrossCanvasLineClipboard
                 return;
             }
 
-            _clipboard = EventClipboardOperations.CaptureLines(picked);
-            _sourceCanvas = ProjectInformation.SelectedCanvas;
-            ClearNativeClipboards(request.Editor);
-
-            var crossCanvas = CrossCanvasLineEditing.CountCrossCanvas(_clipboard);
+            var sourceCanvas = ProjectInformation.SelectedCanvas;
+            // Capture before deleting: for cut the plugin clipboard must contain the source lines even
+            // though CutLines is about to remove them. DeleteOnly only uses this for the status count.
+            var captured = EventClipboardOperations.CaptureLines(picked);
+            var crossCanvas = CrossCanvasLineEditing.CountCrossCanvas(captured);
             var points = 0;
-            foreach (var line in _clipboard)
+            foreach (var line in captured)
                 points += line.Points.Count;
-            var note = request.Cut ? "（Shift 剪切暂按复制处理，原谱面未删除）" : string.Empty;
-            SetStatus(
-                $"跨画布选择：已选中并复制 {picked.Count} 条线{note}，其中跨画布 {crossCanvas} 条，共 {points} 个节点，"
-                + $"源画布 {_sourceCanvas}，原版线剪贴板已清空。");
+
+            if (request.Cut || request.DeleteOnly)
+                DeletePickedLines(request.Editor, picked, request.DeleteOnly);
+            else
+                ClearNativeClipboards(request.Editor);
+
+            // Only publish the plugin clipboard after the deletion succeeded. A failed CutLines must
+            // not leave a clipboard that no longer matches the chart.
+            if (!request.DeleteOnly)
+            {
+                _clipboard = captured;
+                _sourceCanvas = sourceCanvas;
+            }
+
+            if (request.DeleteOnly)
+            {
+                _status =
+                    $"跨画布删除：已删除 {picked.Count} 条线，其中跨画布 {crossCanvas} 条，共 {points} 个节点；未写入剪贴板。";
+            }
+            else if (request.Cut)
+            {
+                _status =
+                    $"跨画布剪切：已剪切 {picked.Count} 条线，其中跨画布 {crossCanvas} 条，共 {points} 个节点，"
+                    + $"源画布 {sourceCanvas}，原版线剪贴板已清空。";
+            }
+            else
+            {
+                _status =
+                    $"跨画布选择：已选中并复制 {picked.Count} 条线，其中跨画布 {crossCanvas} 条，共 {points} 个节点，"
+                    + $"源画布 {_sourceCanvas}，原版线剪贴板已清空。";
+            }
+
+            SetStatus(_status);
             Plugin.LogSource.LogInfo(_status);
         }
         catch (Exception error)
         {
             Plugin.LogSource.LogError($"[跨画布线] 完成框选失败：{error}");
             SpeedEasePanel.Instance?.SetEventStatus($"跨画布线：完成框选失败（{error.Message}）。");
+        }
+    }
+
+    /// <summary>
+    /// Ctrl+D without Shift: reuse the original CutLines but restore both native line clipboards, so
+    /// the deletion does not replace what the next Ctrl+V will paste.
+    /// </summary>
+    private static void DeleteNativeSelection(LineEditor editor, Il2CppReferenceArray<Line>? lines)
+    {
+        var saved = EventClipboardOperations.CaptureLines(editor);
+        var savedMirror = EventClipboardOperations.CaptureMirrorLines(editor);
+        try
+        {
+            if (lines != null)
+                SpeedClipboardController.WithoutNativeLineExport(() => editor.CutLines(lines, false));
+        }
+        finally
+        {
+            EventClipboardOperations.ReplaceLineClipboard(editor, saved);
+            EventClipboardOperations.ReplaceMirrorLineClipboard(editor, savedMirror);
+        }
+
+        var count = lines?.Length ?? 0;
+        var status = $"已删除 {count} 条线（未写入软件剪贴板）。";
+        SetStatus(status);
+        Plugin.LogSource.LogInfo(status);
+    }
+
+    /// <summary>
+    /// Deletes the whole lines picked by the Shift rectangle. The original CutLines removes the Line
+    /// objects from the chart (including all canvases); its native clipboard is either cleared for a
+    /// cut or restored for delete-only. System-clipboard export is suppressed because the cross-canvas
+    /// path owns the clipboard.
+    /// </summary>
+    private static void DeletePickedLines(LineEditor editor, List<Line> picked, bool deleteOnly)
+    {
+        var saved = deleteOnly ? EventClipboardOperations.CaptureLines(editor) : Array.Empty<LineClipboardEntry>();
+        var savedMirror = deleteOnly ? EventClipboardOperations.CaptureMirrorLines(editor) : Array.Empty<LineClipboardEntry>();
+
+        var native = new Il2CppReferenceArray<Line>(picked.Count);
+        for (var index = 0; index < picked.Count; index++)
+            native[index] = picked[index];
+
+        try
+        {
+            SpeedClipboardController.WithoutNativeLineExport(() => editor.CutLines(native, false));
+        }
+        finally
+        {
+            if (deleteOnly)
+            {
+                EventClipboardOperations.ReplaceLineClipboard(editor, saved);
+                EventClipboardOperations.ReplaceMirrorLineClipboard(editor, savedMirror);
+            }
+            else
+            {
+                ClearNativeClipboards(editor);
+            }
         }
     }
 

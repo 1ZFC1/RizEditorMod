@@ -900,18 +900,21 @@ internal static class EditorOperations
         if (panels == null || panels.Length == 0)
             throw new InvalidOperationException("调色板尚未初始化。请先点开画线工具里的颜色选择器，再重试。");
 
-        var uniqueColors = ChartColorCollection.UniqueInOrder(CollectChartColors(chart));
-        if (uniqueColors.Count == 0)
+        var occurrences = CollectChartColors(chart).ToList();
+        if (occurrences.Count == 0)
             return "当前谱面没有可导入的颜色。";
 
         var existing = new string[panels.Length];
         for (var index = 0; index < panels.Length; index++)
             existing[index] = ToRgba(panels[index]).ToHex();
 
-        var merged = ChartColorCollection.MergeIntoSlots(existing, uniqueColors);
+        var plan = ChartColorCollection.PlanFrequencyInsert(existing, occurrences);
+        if (plan.Added == 0)
+            return "当前谱面没有可导入的颜色（已跳过 alpha = 0）。";
+
         for (var index = 0; index < panels.Length; index++)
         {
-            var hex = string.IsNullOrEmpty(merged.Slots[index]) ? "FFFFFFFF" : merged.Slots[index];
+            var hex = string.IsNullOrEmpty(plan.Slots[index]) ? "FFFFFFFF" : plan.Slots[index];
             if (!Rgba32.TryParseHex(hex, out var rgba))
                 continue;
             panels[index] = new UnityEngine.Color(
@@ -934,7 +937,40 @@ internal static class EditorOperations
         }
 
         PaintPaletteImages();
-        return $"已写入调色板：新增 {merged.Added}，跳过重复 {merged.Duplicate}，槽位不足 {merged.Overflow}（谱面去重后 {uniqueColors.Count} 色）。";
+        return $"已写入调色板：前插 {plan.Added} 色（按频率；{plan.MovedFromOld} 色原已存在，已移到前面），容量不足移出旧色 {plan.Evicted} 色，丢弃 {plan.Dropped} 色（可导入 {plan.ChartColorCount} 色，已跳过 alpha = 0）。";
+    }
+
+    public static string ClearPalette()
+    {
+        var project = ProjectInformation.instance;
+        if (project == null)
+            throw new InvalidOperationException("当前无法访问编辑器项目。");
+
+        var panels = ProjectInformation.colorPanels;
+        if (panels == null || panels.Length == 0)
+            throw new InvalidOperationException("调色板尚未初始化。请先点开画线工具里的颜色选择器，再重试。");
+
+        var slots = ChartColorCollection.BuildEmptySlots(panels.Length);
+        for (var index = 0; index < panels.Length; index++)
+        {
+            panels[index] = new UnityEngine.Color(1f, 1f, 1f, 1f);
+            var hex = string.IsNullOrEmpty(slots[index]) ? "FFFFFFFF" : slots[index];
+            PlayerPrefs.SetString(PalettePrefKey(index), hex);
+        }
+
+        ProjectInformation.colorPanels = panels;
+        PlayerPrefs.Save();
+        try
+        {
+            ProjectInformation.OnColorPanelsChanged?.Invoke();
+        }
+        catch (Exception exception)
+        {
+            Plugin.LogSource.LogWarning($"OnColorPanelsChanged 调用失败：{exception.Message}");
+        }
+
+        PaintPaletteImages();
+        return $"已清空调色板（{panels.Length} 槽）。";
     }
 
     private static IEnumerable<Rgba32> CollectChartColors(Chart chart)
@@ -1033,6 +1069,8 @@ internal static class EditorOperations
                 presets[index].color = panels[index];
             }
         }
+
+        PaletteColorTriangle.RefreshAll();
     }
 
     private static readonly Dictionary<int, PreviewLineWidth> PreviewLineWidths = new();

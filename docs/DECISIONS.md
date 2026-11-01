@@ -237,10 +237,10 @@
 
 硬约束（实测）：**`GUI.DrawTexture` 在本构建被裁剪**（调用报 `NotSupportedException：Method unstripping failed`），`GUIContent(Texture)` 构造也不存在。因此边框只能用 `GUI.Box`：优先「自建 1×1 白纹理 + 纯色 `GUIStyle`」，该重载不可用时自动回退「默认 `GUI.Box` + `GUI.color` 着色」并记一次日志。
 
-## D-030：跨画布线的复制与粘贴由插件接管（Shift 框选整条线、画布整体偏移、锚点取最早拍的最大 x）
+## D-030：跨画布线的复制、剪切、只删除与粘贴（Shift 框选整条线、画布整体偏移、锚点取最早拍的最大 x）
 
-- 日期：2026-10-15/16
-- 状态：Accepted（使用者验收：「很好，吸附没有问题了」「没有问题了」）
+- 日期：2026-10-15/16；2026-10-30 增补 Shift 剪切与 `Ctrl+D` 只删除
+- 状态：Accepted（原复制/粘贴已由使用者验收；2026-10-30 增补已验收「没问题」）
 
 背景：一条线的 `linePoints[].canvasIndex` 是**逐节点**的，所以一条线可以跨多个画布。原版既选不中也粘不对——选择按渲染分组、命中只用拍数（反汇编 `<SelectLines>d__35.MoveNext`），粘贴把每个点直接改写成当前画布且**完全不做画布换算**（反汇编 `LineEditor.Paste`：没有鼠标读取、没有时间换算；实测画布 11 复制、画布 12 粘贴后时间不变、画布被改写）。
 
@@ -251,7 +251,8 @@
 3. **剪贴板归属**：Shift 复制 → 写插件剪贴板并**清空原版两个线剪贴板**；原版复制/剪切或系统剪切板导入 → **清空插件剪贴板**。即「最后复制者拥有剪贴板」，避免 `Ctrl+V` 粘到旧内容。
 4. **粘贴**（`Ctrl+V` / `Ctrl+Shift+V`，排队到下一帧执行）：锚点 = 全剪贴板中**节拍最小**的节点、同拍并列时取 **x 最大**者（原版口径）；每个节点 `canvasIndex += (目标画布 − 源画布)`、Hold 的 `otherInformations[1]` 同步偏移，新画布不存在则**放弃粘贴**；时间按锚点差平移（音符、Hold 结束拍、颜色关键点一起平移）；x 平移使锚点落在鼠标处，镜像则**以鼠标为对称轴反射**（等价于原版「复制取负 + 对齐鼠标」的合成）。写入包在 `EditControl.Stepping` 内 + `SetFloorPosition()`，**不再**用 `IncOrDecCanvasIndex`/`ChangeCanvasIndex` 强制刷新（会改动画布聚焦甚至失败），改为 0.5 秒后只读复核渲染。
 5. **吸附与换算**：局部 x 由**实测映射**求得（同一画布两个已渲染节点反解，实测斜率 **5.625**；插件旧用的单位常数 **5.5625 偏约 1.1%**，已弃用）；基础格距从编辑器**实际画出的** `SnapLines/SnapLine(Clone)` 量得（世界 0.5625 = 局部 0.1）；**吸附步长 = 基础格距 ÷ 水平细分**（`snapHLinesSplit` 的值是细分数：1＝基础格、2＝二等分、4＝四等分），拍吸附沿用垂直细分口径（`GetCanvasPasteAnchor`）。
-6. 不按 `Shift` 时**零干预**：原版复制/剪切/粘贴与手感完全不变；`Shift` 剪切暂按复制处理。
+6. 不按 `Shift` 时**零干预**：原版复制/剪切/粘贴与手感完全不变。
+7. **2026-10-30 增补：Shift 剪切/只删除**。`Ctrl+X` 在 Shift 选中整条跨画布线后，把整线数组交给原版 `CutLines` 删除源线（含其它画布节点、音符、颜色事件），插件剪贴板保留、原版线剪贴板清空；`Ctrl+D` 在线编辑里也走同一框选，Shift 选中后只删除，删除前快照、删除后还原原版两个线剪贴板，插件剪贴板不变。删除期间临时抑制系统剪切板导出；不按 Shift 的 `Ctrl+X/D` 仍走原版行为。
 
 原因：原版的数据模型（选择按渲染分组、粘贴压平画布）无法承载跨画布线；而使用者要的是「按可见内容框选、整条线连带跨画布结构一起搬走」。把换算与吸附建立在**实测的渲染几何与真实网格对象**上，可以避开单位常数与细分属性语义的坑。
 
@@ -514,3 +515,82 @@
 3. **`PlayerPrefs` 键确认**为 `lastFilePath` / `lastSongPath`；未保存标记用 **`notSaved`**（`ChartIsDirty` 编辑后仍为 False，不可靠）。
 
 实现落点与验收步骤见 `docs/features/PROJECT_SWITCH.md`；「最近三个工程」列表的排序/去重逻辑放在 Core（`ProjectSlotList`）并有 4 条自动测试。
+
+## D-033：调色板导入改为按频率前插、旧色顺延，并新增清空
+
+- 日期：2026-10-29
+- 状态：Accepted（策略由使用者 2026-10-29 明确指定；同日修正「整体右移」为稳定重排；已由使用者验收）
+
+背景：原「一键加入调色板」只填空槽（`FFFFFFFF`），60 槽满后无法再加入；新颜色按出现顺序而不是使用频率排列。使用者要求改成可重复整理调色板的策略。
+
+决定：
+
+1. 收集每一次出现（2 主题 × 3 色、每个 `linePoints[].color`、每个 `lineColor` / `judgeRingColor` 的 `startColor` 与 `endColor`），但**跳过 `alpha = 0`**：完全透明色不参与计数，也不进入前置集合；旧调色板中已有的 `alpha = 0` 槽位不额外清理。（2026-10-29 二次确认：先按「不跳过」实现后，透明端点会占据前置区，实际效果不好，改为跳过。）
+2. 按 RGBA 精确聚合出现次数，按**次数降序**排序；次数相同按**首次出现顺序**。所有 `alpha > 0` 的谱面颜色都进入前置集合（包括已在调色板中的），最多取前 60 个；超出容量的谱面颜色丢弃。
+3. `x` = 前置集合大小。新颜色占槽位 `0..x-1`；旧调色板中不属于前置集合的**非空颜色**保持原顺序，紧接在前置块之后；空槽不参与顺延，统一落在末尾；总容量不足时从尾部丢弃。
+4. **不产生重复**：旧槽中与前置集合相同的颜色直接移除（计为「原已存在，已移到前面」），因此同一颜色只会出现在前置区一次。旧槽之间既有的重复不做额外清理；旧的非前置非空颜色保持相对顺序，**不做整体平移**。
+5. 纯白 `FFFFFFFF` **不特殊处理**，哨兵值不变；因此纯白仍与空槽同形，重复导入时会被再次当作前置色。
+6. 三个面板各增加「清空调色板」：第一次点击进入确认态，第二次点击把全部槽写回 `FFFFFFFF`，同步 `ProjectInformation.colorPanels` 与 `PlayerPrefs`；全局、不可撤销、不写谱面、不产生 Undo。
+7. 纯逻辑放在 `Core/ChartColorCollection.cs` 的 `PlanFrequencyInsert`；`EditorOperations` 只负责收集、写 `Color[]` / `PlayerPrefs` 与重绘。
+8. **重复导入幂等**：同一组前置色再次导入时，`next = front + oldRest` 与当前布局相同，不会继续移动或挤出旧色。
+
+**修正记录（2026-10-29）**：初版按「旧 60 槽整体右移 `x` 位」实现。使用者实测发现每次点击都按固定的 `x` 再平移一次，即使前置块没有变化，旧色也会在多次点击后被全部挤出。现改为「前置块 + 旧的非前置颜色顺延」，重复导入同一内容时结果不变。
+
+副作用（已知且接受）：
+
+- 第一次导入若 `front + oldRest` 超过 60，会一次性丢弃尾部旧色；之后同样的导入不再改变。谱面颜色变化时只按新的前置块调整/丢弃一次。
+- 频率排序决定超过 60 色时哪些谱面颜色能进入；同频按首次出现顺序，结果可复现。
+- 清空是全局调色板操作，不能用 `Ctrl+Z` 恢复。
+
+## D-034：调色板非空槽的颜色三角形角标
+
+- 日期：2026-10-29
+- 状态：Accepted（由使用者 2026-10-29 要求并验收；最终为面积 1/6、内缩 1 px）
+
+背景：调色板槽位是 `Image.color` 叠加在棋盘格背景上，低 alpha 的颜色会被背景冲淡，很难看出原本的 RGB。使用者的方案是：不写文字，在每个**非空槽位**的右下角直接画一个**不透明 RGB 三角形**，槽位本体、棋盘格和布局保持不变。
+
+决定：
+
+1. 覆盖范围：所有非空槽位；`FFFFFFFF`（空槽）不画。`alpha = 0` 但颜色值不是 `FFFFFFFF` 的槽位仍算非空，也画。
+2. 形状与大小：右下角直角三角形，直角在槽位右下，斜边朝左上；**面积占槽位面积的 1/6**，直角边 = `sqrt(宽 × 高 / 3)`（24×25 槽约 14 px）；整体**内缩 1 px**，让开槽位黑色边框，不覆盖它。
+3. 颜色：三角形一律使用槽位颜色的 RGB、**alpha 固定为 1**，这样低 alpha 也能看到原始色相；槽位本体的 alpha 不变。
+4. 实现：不创建 `Texture2D` / `Sprite`（本构建调用会报 `Method unstripping failed`）；在槽位右下角放一个**直角边大小的正方形 `RectMask2D` 容器**，容器里放一个旋转 45° 的白色方形 `Image`，只保留容器内被裁出的三角形；`Image.color` 负责着色，`raycastTarget = false`，并作为最后一个子物体。正方形裁剪容器保证宽高不一致的槽位里也是规整的等腰直角三角形。
+5. 刷新：`PaintPaletteImages()`（导入/清空后）主动刷新；`ColorSelectorControl.Start` / `OnEnable` / `SyncColorPanels` 的 Harmony Postfix 在面板打开、原版改颜色/alpha 后刷新。已存在的角标复用，不重复创建。
+6. 纯显示层：不改 `ProjectInformation.colorPanels`、`PlayerPrefs`、谱面或 Undo；不改变点击命中。
+7. 纯白与 `FFFFFFFF` 仍无法区分（哨兵限制），所以纯白槽位不会显示角标。
+
+依据：只读探针确认 6 个 `ColorSelectorControl` 实例、每个 60 槽；槽位是 `UnityEngine.UI.Image`（`sprite = null` 的纯白颜色层，棋盘格在下方），面板未打开时 `colorPresets` 全为 `null`；Canvas 为 `ScreenSpaceCamera`、`scaleFactor = 1.05`。使用者提供的 24×25 棋盘格截图对应槽位，其余是预览/色条。
+
+已知风险/边界：
+
+- 若槽位或其父级有 `Mask`/`RectMask2D`，内缩 1 px 后的三角形仍可能被裁切；实现后需实机确认。
+- 打开面板时角标在 `SyncColorPanels` 后出现，可能有一帧延迟。
+- 每个面板最多 60 个角标（每个含一个 `RectMask2D`）；6 个面板均打开时约 360 个小遮罩，刷新只在面板事件/导入时发生，不做每帧遍历。
+- 首次实现用运行时 `Texture2D` / `Sprite.Create` 生成三角形，实测报 `Method unstripping failed`，因此改为“矩形遮罩 + 旋转方块”的无纹理方案。
+
+## D-035：预览区域颜色角标（矩形三角、水滴圆 ∩ 水滴）
+
+- 日期：2026-10-29
+- 状态：Accepted（由使用者 2026-10-30 验收；矩形 14px 三角、水滴圆半径=短边一半、相交面积约 1/6）
+
+背景：调色板槽位已有颜色三角形角标，但颜色预览区域仍只能通过低 alpha 的色块或点击查看原色。使用者要求把角标扩展到预览区域：矩形预览用小三角形，水滴形预览用“以右下为圆心的圆与水滴的圆取交集”。
+
+只读探针确认（2026-10-29）：
+
+- `ColorSelectorControl.colorPreview` 是 **98×28** 的 `Image`；`externalColorPreview` 是 **98×42**、`Image.Type.Sliced`；二者对应使用者截图里的「基础色」/色条预览。
+- `ColorTag.colorBefore` / `colorAfter` 各 **60×30**，分别锚在父级上下半区；`ColorTag` 自身及 `ColorTag/Mask` 带 `Mask`（sprite=`Mask`，水滴形遮罩）。两个水滴形预览就是这些 `ColorTag`。
+- 颜色预览/`ColorTag` 都会在打开颜色/主题工具后初始化；`ColorTag.SetColor(...)` 有三个重载。
+
+决定：
+
+1. **矩形预览**（`colorPreview`、`externalColorPreview`）：使用与调色板相同的无纹理三角形，固定直角边 **14 px**、内缩 1 px；颜色取该 `Image.color` 的 RGB，alpha 固定 1。不覆盖预览本体。
+2. **水滴形预览**（`ColorTag`）：不画三角形，改为画一个与**水滴圆同半径**的圆（父级短边的一半，60×60 时半径 30）；按“两圆相交面积 = 预览面积 1/6”反解圆心距离。**线色**的水滴放右下，**判定环**的水滴放左下，形成对称。判定环识别：命名 tag 用 `ColorEditor.currentJudgeRingColorTag` / `judgeRingColorTagPrefab`；无 current 引用的事件克隆（`Tags/ColorTag(Clone)`、`Tags/ColorTagRtl(Clone)`）按 `rtl` **反向**判断——运行日志确认 `LineColorTag.rtl=true`、`RingColorTag.rtl=false`，即 `rtl=true` 是线色（右）、`rtl=false` 是判定环（左）。圆角标只在 `SpeedEasePanel.ColorEditorIsActive` 且父级激活时显示，避免残留到时间与速度等工具栏。圆放在 `colorBefore`/`colorAfter` 的同一父级下，由 ColorTag 的水滴 `Mask` 裁切，可见部分即“圆 ∩ 水滴”。颜色取右下/左下所在的 `Before` 颜色；Before 完全透明时改用 After。
+3. 刷新：`ColorSelectorControl.Start` / `OnEnable` / `SetColor` Postfix；`ColorTag.Start` 与 `ColorTag.SetColor` 三个重载 Postfix。已存在角标复用，仅颜色变化时更新。
+4. 纯显示层：不改预览本体、调色板数据、谱面、`PlayerPrefs` 或 Undo；`raycastTarget=false`，不影响点击。
+5. 圆形 Sprite 优先取 Unity 内置 `UI/Skin/Knob.psd`，不可用时在已加载 `Sprite` 中找名字含 `knob`/`circle` 的；都找不到时只记录一次警告，水滴角标不显示（矩形预览角标不受影响）。
+
+风险/边界：
+
+- 水滴角标依赖 `ColorTag` 的 `Mask` 形状与圆形 Sprite；如果某个版本没有圆形 Sprite，水滴角标会缺省。
+- 圆形角标与水滴遮罩的交集形状由遮罩决定，不额外做几何计算。
+- 2 个矩形预览 + 7 个 `ColorTag` 实例的角标都只在对应 `SetColor`/初始化事件时刷新，不做每帧遍历。

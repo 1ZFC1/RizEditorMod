@@ -1,6 +1,6 @@
 # 项目状态
 
-最后更新：2026-09-23
+最后更新：2026-10-30
 
 ## 当前阶段
 
@@ -10,6 +10,7 @@
 
 **本轮已完成并验收**（2026-09-24/10-15，均已装入 `RhythmEditor_working`，自动测试 **51/51**）：
 
+0. **流速换算确认**（2026-11-01，`V1`）：反汇编 `ProjectInformation.set_RelativeSpeed`（RVA `0x2BEBE0`）确认「播放流速显示值 S0 ↔ `RelativeSpeed` ↔ `project.speed`（偏移 `0x180`）」的换算：`RelativeSpeed` 钳在 `[-9, 18]`；`speed = 7·rel/18 + 6`；显示值 `S0 ≥ 1` 时 `1 + rel/2`、`S0 < 1` 时 `1 + rel/10`（分段，故正负区间公式不同）。代入默认 `S0 = 1.5 → S1 = 6.3889`；缩放=1 时每屏秒数 = `10/S1`、每屏拍数 = `(10/S1)×有效BPM/60`（BPM 175 → ≈4.56 拍）。已写入 `docs/EDITOR_AXES_REFERENCE.md` §9.1 与 `docs/CHART_FORMAT.md`（`floorPosition` 小节 + 证据 `V1`）。顺带验证 `NoteSpeedLimit` 的 −9 钳制字节位置与「放宽到 −15 后 speed 仍为正」的注释。
 0. **公开仓库已建立**（2026-10-16）：GitHub 仓库 <https://github.com/1ZFC1/RizEditorMod>（Public，MIT 覆盖插件自身源码）。发布采用**独立工作区**方案：`RZEMOD\RizEditorMod\` 是公开镜像（自己的 git 历史），由 `tools/Publish-GitHub.ps1` 从开发仓库的**跟踪文件**同步（排除私人笔记、规范化本地绝对路径、保留手写的 README/LICENSE），`RhythmEditor_working` / `modded` / `original` 均不受影响。首次发布：2 个提交、103 文件、375 KiB，含 `README.md`、`LICENSE`(MIT)、`docs/GITHUB.md`（维护教程）与 `tools/Publish-GitHub.ps1`；标签 `v0.4.0`。仓库**不含**游戏本体、`GameAssembly.dll`、`BepInEx/`（interop/metadata）、`#Samples/`、音频与发布 ZIP。
 0. **发布 0.4.0**（2026-10-16，已完成自动化验证与人工验收）：`Plugin.Version` = `0.4.0`；包 `artifacts/releases/RhythmEditorMod-0.4.0-win-x64.zip`，**ZIP SHA-256 `5E460EE6D164FE2D9F14B2BC61704C21DC78B2DE55B5DC869023B84675015C56`**，payload 387 文件 / 139,509,396 字节；插件测试 51/51，插件+管理器+原生启动器 0 警告 0 错误；干净副本（由 `original` 新复制、58/58 一致）依次通过安装/重复安装/禁用启用/仅卸载重装/完整移除重装，且 58 文件始终与 baseline 一致；`RhythmEditor_modded` 已由 0.3.0 升到 0.4.0（备份 `20261016-004012`），安装后 DLL 与构建产物逐字节一致；使用者确认可用。细节见 `DISTRIBUTION.md`。提交 `0e3bf00`。
 0. **修复「项目」工具提示文本串台 + 日志规范化**（D-032）：项目 body 的状态行与标题改为**自持**（每帧重设），项目消息直连自身、不再与公共状态出口互通 → 在画布流速里设定缓动不会再改写项目面板文字；日志改为「信息尽量全、只在动作/状态变化时输出」，并修掉上一版每帧重写标题造成的刷屏（一轮会话 1052 行中 718 行），补全缩放/项目 body/游玩区域边框/预览蒙版/跨画布剪贴板等日志上下文。已由使用者验收（「没什么问题」）；更细的字段取舍记为低优先（`BACKLOG.md`）。
@@ -105,15 +106,25 @@ D:\steam\steamapps\common\Rizline\Editor\谱面\BATTLE NO1\Chart_NO1.json
 | 发布 | 仅谱面统计（画布/线/Tap/Hold/Drag） |
 | 画布流速 | 缓动采样；框选复制/剪切/`Ctrl+D` 删除；系统剪切板可选导出 |
 | 画布/摄像机 | 框选剪贴板与 `Ctrl+D` |
-| 颜色编辑 | 框选按大地 x=0 左右路由（左=线色覆盖／右=判定环／跨过=两者）；粘贴跟随上次复制并覆盖同拍；`Ctrl+D` |
-| 画线 | 一键入调色板；原版复制剪切；可选系统导出；`Ctrl+D` 删线不进剪贴板 |
-| 主题 | 一键入调色板 |
+| 颜色编辑 | 框选按大地 x=0 左右路由（左=线色覆盖／右=判定环／跨过=两者）；粘贴跟随上次复制并覆盖同拍；`Ctrl+D`；一键入调色板（频率前插/旧色顺延/可清空） |
+| 画线 | 一键入调色板（频率前插/旧色顺延/可清空）；原版复制剪切；可选系统导出；`Ctrl+D` 删线不进剪贴板；Shift 框选跨画布整线后 `Ctrl+X` 剪切、`Ctrl+D` 只删除 |
+| 主题 | 一键入调色板（频率前插/旧色顺延/可清空） |
+| 调色板显示 | 非空槽右下角不透明 RGB 三角形（D-034）；`FFFFFFFF` 空槽不画 |
+| 颜色预览 | 矩形预览右下角 14px 三角；水滴形 ColorTag 的“圆 ∩ 水滴”角标（D-035） |
 | 项目 | 面板正式用途：**编辑期内切换工程**。显示最近三个工程（谱面+音乐），点击即切换；另有「选择文件…」走原版两步对话框。切换前自动保存，未保存过的新工程拒绝切换（D-024） |
 | 弹性缓动（拟合） | **画布**与**摄像机·横向移动**的缓动下拉框末尾追加 `In Elastic` / `Out Elastic` / `InOut Elastic`：把弹性曲线烘焙成 `easeType = 0` 的普通节点，位置按曲线自适应；不可逆（一次 `Ctrl+Z` 可整体撤销）。**摄像机缩放与编辑线不支持**（原因见 D-023） |
 
-横向缩放：突破极限开启后 `Ctrl+Shift+滚轮` 40%–100%；`Ctrl+M` 复位；小于 100% 时自动隐藏 `editorMask`。纯数据测试 **25/25**。
+横向缩放：突破极限开启后 `Ctrl+Shift+滚轮` 40%–200%、每格 10 个百分点；`Ctrl+M` 复位；纯数据测试 **58/58**。
 
 ## 已完成（近期迭代）
+
+- 修复颜色水滴角标残留到“编辑时间与速度”工具栏（D-035 显示条件）：`PreviewColorCircle` 是 `ColorTag` 的子物体，切换工具后原父级仍激活时会露出圆形色块。`PreviewColorBadge.Tick()` 现在只在 `SpeedEasePanel.ColorEditorIsActive` 且角标父级激活时显示水滴圆，其它工具隐藏；`SpeedEasePanel.LateUpdate` 每帧调用，只遍历已创建的水滴圆列表。自动测试 **58/58**，插件 `RhythmEditorMod.dll` `BE09042F…`，已由使用者验收（「目前没有问题」）；细节见 `docs/features/PREVIEW_COLOR_BADGES.md`。
+
+- 跨画布线的 Shift 剪切 / `Ctrl+D` 只删除（D-030 增补）：`Ctrl+X` + Shift 框选整条跨画布线后，把整线数组交给原版 `CutLines` 删除源线（含其它画布节点、音符、颜色事件），插件剪贴板保留；`Ctrl+D` 在线编辑里也进入同一跨画布框选，Shift 选中后只删除，删除前快照、删除后还原原版两个线剪贴板，插件剪贴板不变。删除期间由 `WithoutNativeLineExport` 抑制系统剪切板导出；不按 Shift 的 `Ctrl+X/D` 仍走原版。自动测试 **58/58**，插件 `RhythmEditorMod.dll` `98CE10DD…`，已由使用者验收（「没问题」）；细节见 `docs/features/CROSS_CANVAS_LINES.md`。
+- 预览区域颜色角标（D-035）：`colorPreview`（98×28）/`externalColorPreview`（98×42）右下角固定 14px 不透明 RGB 三角形；水滴形 `ColorTag` 画与水滴圆同半径的圆（短边一半），按“相交面积 = 预览面积 1/6”反解圆心距离；**线色右下、判定环左下**（命名 tag 用 `ColorEditor` 当前引用；事件克隆按 `rtl` 反向，`rtl=true` 线色、`rtl=false` 判定环），由水滴 `Mask` 裁成“圆 ∩ 水滴”，颜色取 Before（透明时 After）。刷新来自 `ColorTag.Start` / 三个 `SetColor` 重载与 `ColorSelectorControl.Start` / `OnEnable` / `SetColor`；不给 `ColorEditor` 属性 setter 挂补丁（已消除字段访问器警告）。自动测试 **58/58**，插件 `RhythmEditorMod.dll` `98CE10DD…`，已由使用者验收（「没问题了」）；细节见 `docs/features/PREVIEW_COLOR_BADGES.md`。
+- 调色板颜色三角形角标（D-034）：在 6 个调色板面板的非空槽位右下角画不透明 RGB 直角三角形（无文字、面积约槽位 1/6、内缩 1px），低 alpha 也能看到原始色相；`FFFFFFFF` 空槽不画。用正方形 `RectMask2D` 容器裁剪旋转 45° 的方块实现（不创建纹理/Sprite，规避 `Method unstripping failed`），`PaintPaletteImages()` 与 `ColorSelectorControl.Start` / `OnEnable` / `SyncColorPanels` Postfix 刷新。自动测试 **58/58**，插件 `RhythmEditorMod.dll` `8792C45B…`，已由使用者验收（「ok」）；细节见 `docs/features/PALETTE_ALPHA_TRIANGLE.md`。
+- 调色板导入策略重做（2026-10-29）：**跳过 `alpha = 0`**；按出现次数降序把全部 `alpha > 0` 的谱面颜色放到调色板最前面，旧的非前置非空颜色按原顺序紧接在前置块之后（空槽留在末尾），容量不足才从尾部丢弃；旧槽中的同色先移除以免重复；**重复导入同样内容不再移动旧色**（修正了初版整体右移导致旧色被逐次挤出的 bug）。三个面板新增「清空调色板」（二次确认）。自动测试 **58/58**，插件 `RhythmEditorMod.dll` `745EE579…`，已由使用者验收（「ok没有问题了」）；细节见 `docs/features/PALETTE_IMPORT.md`。
+- 调色板导入反馈修复（2026-10-29）：三处「一键加入调色板」改用独立的 `_paletteStatus`，画线 / 颜色 / 主题面板都显示导入结果；「预览细线」不再改写调色板说明文字。已由使用者验收（「正常」），自动测试 51/51。
 
 - 插件获得自己的工具栏入口（D-022）：运行时克隆「光标」按钮追加到工具栏末尾，标题「插件」，面板按对象身份路由；本次是「自定义工具栏工具」的机制验证，面板内容为占位。过程中确认两条重要事实：工具栏按钮没有 `UnityEngine.UI.Button`（鼠标点选由 `ToolbarToolButton.Update()` 处理，克隆体天然继承），且原工具栏的快捷键映射覆盖不到晚创建的克隆体（按 `9` 改由插件自己选择）。另发现 `GetComponentInChildren<T>(bool)` 在本构建必抛 `VerificationException`，组件查找改为「遍历子树 + `GetComponents<Component>()` + `TryCast<T>()`」，发布那条 `PublishControl` 附加确认随之从「永远为空」变为可用（日志显示 `PublishControl=Control`）。已由使用者在 working 副本验收（标题、鼠标点击、快捷键 `9`、与其它工具互斥）；最终干净构建为 `RhythmEditorMod.dll` `0C5821A8…`（临时探针未参与编译）。
 - 颜色编辑剪贴板重做（D-019、D-020）：框选横向按大地 x=0 路由到线色覆盖／判定环／两者；`Ctrl+V` 与 `Ctrl+Shift+V` 锚点不变但目标数组跟随上次复制；粘贴覆盖同拍并把同拍重复塌缩成一条；粘贴块尾部 `endColor` 重定向，不再带进选区之外的过渡。修复两个缺陷：颜色写入被钳成纯白（`Color32` vs `Color`）、`editingLineColor` 读取抛 `NullReferenceException` 导致复制整体失败。已由使用者在 working 副本验收。
